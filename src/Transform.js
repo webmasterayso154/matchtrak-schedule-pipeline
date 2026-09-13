@@ -1,15 +1,18 @@
-/**
- * Data transformation and normalization engine for AYSO Region 154 schedules.
+﻿/**
+ * Data transformation engine with bidirectional BYE filtering and chronological sorting.
  */
 
-function isE154HomeGame(row) {
-  if (!row || row.length < 13) return false;
+function isE154HomeGame(row, headerMap) {
+  if (!row || row.length < 10) return false;
   
-  const type = String(row[7] || "").trim().toUpperCase();
-  const field = String(row[8] || "").trim();
-  const homeTeam = String(row[9] || "").trim();
+  const type = String(row[headerMap.type] || "").trim().toUpperCase();
+  const field = String(row[headerMap.field] || "").trim();
+  const home = String(row[headerMap.home] || "").trim();
+  const away = String(row[headerMap.away] || "").trim();
+  const time = String(row[headerMap.time] || "").trim();
 
-  if (type === "BYE" || field.includes("BYE") || homeTeam.includes("#BYE")) {
+  // Exclude BYEs from either side and games without valid times
+  if (type === "BYE" || field.includes("BYE") || home.includes("#BYE") || away.includes("#BYE") || !time) {
     return false;
   }
 
@@ -32,12 +35,8 @@ function cleanFieldName(rawField) {
 
 function getOperationalVenue(cleanField) {
   const f = String(cleanField).toLowerCase();
-  if (f.includes("park lexington")) {
-    return "Park Lexington";
-  }
-  if (f.includes("lexington") || f.includes("arnold")) {
-    return "Lexington JHS / Arnold Complex";
-  }
+  if (f.includes("park lexington")) return "Park Lexington";
+  if (f.includes("lexington") || f.includes("arnold")) return "Lexington JHS / Arnold Complex";
   return "Other Cypress Field";
 }
 
@@ -74,10 +73,6 @@ function cleanTime(rawTime) {
   return str;
 }
 
-/**
- * Converts 12-hour AM/PM time strings into absolute minutes from midnight
- * to prevent alphabetical sort errors (e.g., 10:00 AM sorting before 8:00 AM).
- */
 function parseTimeToMinutes(timeStr) {
   if (!timeStr) return 0;
   const match = String(timeStr).trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
@@ -90,54 +85,97 @@ function parseTimeToMinutes(timeStr) {
   return hours * 60 + minutes;
 }
 
-function buildFormDropdownLabel(game) {
-  return `${game.dateStr} ${game.timeStr} | ${game.division} | ${game.homeCoach} vs ${game.awayCoach} | ${game.cleanField} [#${game.gameId}]`;
+function parseDateToTimestamp(rawDate) {
+  if (!rawDate) return 0;
+  if (rawDate instanceof Date) return rawDate.getTime();
+  const parts = String(rawDate).trim().split("/");
+  if (parts.length >= 2) {
+    const month = parseInt(parts[0], 10) - 1;
+    const day = parseInt(parts[1], 10);
+    const year = parts[2] ? parseInt(parts[2], 10) : 2026;
+    return new Date(year, month, day).getTime();
+  }
+  return 0;
+}
+
+function buildHeaderMap(headers) {
+  const map = {
+    circuit: -1, date: -1, time: -1, gameId: -1, division: -1,
+    type: -1, field: -1, home: -1, away: -1, centerRef: -1, ar1: -1, ar2: -1
+  };
+  headers.forEach((h, i) => {
+    const col = String(h).trim().toLowerCase();
+    if (col === "circuit") map.circuit = i;
+    else if (col === "date") map.date = i;
+    else if (col === "time") map.time = i;
+    else if (col.includes("game #") || col === "game") map.gameId = i;
+    else if (col === "division") map.division = i;
+    else if (col === "type") map.type = i;
+    else if (col === "field") map.field = i;
+    else if (col.includes("home team") || col === "home") map.home = i;
+    else if (col.includes("away team") || col === "away") map.away = i;
+    else if (col.includes("center referee") || col === "referee" || col === "cr") map.centerRef = i;
+    else if (col === "ar1") map.ar1 = i;
+    else if (col === "ar2") map.ar2 = i;
+  });
+  return map;
 }
 
 function transformRawSchedule(rawRows) {
   if (!rawRows || rawRows.length <= 1) return [];
 
+  const headerMap = buildHeaderMap(rawRows[0]);
   const cleanGames = [];
 
   for (let i = 1; i < rawRows.length; i++) {
     const row = rawRows[i];
-    if (!isE154HomeGame(row)) continue;
+    if (!isE154HomeGame(row, headerMap)) continue;
 
-    const gameId = String(row[3] || "").trim();
-    const division = String(row[4] || "").trim();
-    const rawDate = row[1];
+    const gameId = String(row[headerMap.gameId] || "").trim();
+    const division = String(row[headerMap.division] || "").trim();
+    const rawDate = row[headerMap.date];
     const dateStr = rawDate instanceof Date 
       ? Utilities.formatDate(rawDate, Session.getScriptTimeZone(), "M/d") 
-      : String(rawDate).replace(/^0/, "");
+      : String(rawDate).replace(/^0/, "").split(" ")[0];
 
-    const timeStr = cleanTime(row[2]);
-    const cleanField = cleanFieldName(row[8]);
-    const homeCoach = cleanTeamName(row[9]);
-    const awayCoach = cleanTeamName(row[11]);
+    const timeStr = cleanTime(row[headerMap.time]);
+    const cleanField = cleanFieldName(row[headerMap.field]);
+    const homeCoach = cleanTeamName(row[headerMap.home]);
+    const awayCoach = cleanTeamName(row[headerMap.away]);
     const venue = getOperationalVenue(cleanField);
+
+    const centerRef = headerMap.centerRef > -1 ? String(row[headerMap.centerRef] || "").trim() : "";
+    const ar1 = headerMap.ar1 > -1 ? String(row[headerMap.ar1] || "").trim() : "";
+    const ar2 = headerMap.ar2 > -1 ? String(row[headerMap.ar2] || "").trim() : "";
 
     const gameObject = {
       gameId: gameId,
-      circuit: String(row[0] || "").trim(),
+      circuit: String(row[headerMap.circuit] || "").trim(),
       dateStr: dateStr,
-      rawDate: rawDate,
+      timestamp: parseDateToTimestamp(rawDate),
       timeStr: timeStr,
       minutes: parseTimeToMinutes(timeStr),
       division: division,
       cleanField: cleanField,
       venue: venue,
-      rawField: String(row[8] || "").trim(),
       homeCoach: homeCoach,
-      rawHome: String(row[9] || "").trim(),
       awayCoach: awayCoach,
-      rawAway: String(row[11] || "").trim(),
       matchup: `${homeCoach} vs ${awayCoach}`,
-      type: String(row[7] || "").trim()
+      centerRef: (centerRef && centerRef !== "Unassigned") ? centerRef : "[Open]",
+      ar1: ar1,
+      ar2: ar2,
+      dropdownLabel: `${dateStr} ${timeStr} | ${division} | ${homeCoach} vs ${awayCoach} | ${cleanField} [#${gameId}]`
     };
 
-    gameObject.dropdownLabel = buildFormDropdownLabel(gameObject);
     cleanGames.push(gameObject);
   }
+
+  // Unified Chronological Sort: Date -> Kick-Off Time -> Field
+  cleanGames.sort((a, b) => {
+    if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
+    if (a.minutes !== b.minutes) return a.minutes - b.minutes;
+    return a.cleanField.localeCompare(b.cleanField);
+  });
 
   return cleanGames;
 }
