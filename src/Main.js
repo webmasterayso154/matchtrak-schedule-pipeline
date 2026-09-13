@@ -1,91 +1,84 @@
 /**
  * Main application controller and UI menu for AYSO Region 154 MatchTrak Pipeline.
- * Binds ingestion, transformation, form sync, setup/takedown, and referee audits.
  */
 
-/**
- * Automatically executed when the Google Sheet is opened.
- * Inserts a dedicated "AYSO 154 Ops" menu into the spreadsheet UI.
- */
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
-  ui.createMenu("⚽ AYSO 154 Ops")
-    .addItem("🔄 Run Full Weekend Sync", "menuRunFullSync")
+  ui.createMenu("? AYSO 154 Ops")
+    .addItem("?? Run Full Weekend Sync", "menuRunFullSync")
     .addSeparator()
-    .addItem("📥 Check Email & Drive Drops", "menuIngestOnly")
-    .addItem("📋 Refresh Google Form Dropdown", "menuSyncFormOnly")
-    .addItem("🥅 Update Field Setup / Takedown", "menuSetupTakedownOnly")
-    .addItem("⚖️ Reconcile Referee Audit", "menuAuditOnly")
+    .addItem("?? Update Setup & Takedown Sheet", "menuSetupTakedownOnly")
+    .addItem("?? Populate Master Home Sheet", "menuPopulateMasterHomeOnly")
+    .addItem("?? Run Referee Coverage Audit", "menuAuditOnly")
+    .addSeparator()
+    .addItem("??? Initialize Sheet Tabs & Headers", "initSheetTabs")
+    .addItem("?? Seed Sample Match Data", "seedTestData")
     .addToUi();
 }
 
-/**
- * Master orchestrator: Ingests new files, updates Form choices,
- * generates Setup/Takedown tables, and refreshes the Audit sheet.
- */
 function menuRunFullSync() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ss.toast("Checking Gmail & Drive for latest MatchTrak files...", "AYSO 154 Sync", 5);
 
   try {
-    // 1. Ingest files from Gmail and Drive drop folder
-    runScheduleIngest();
+    ss.toast("Reading schedule data...", "AYSO 154 Sync", 3);
+    
+    // Master home sheet population
+    menuPopulateMasterHomeOnly();
 
-    // 2. Synchronize Form dropdown
-    ss.toast("Updating Game Day Google Form...", "AYSO 154 Sync", 5);
-    syncFormDropdown();
+    // Setup & takedown table computation
+    menuSetupTakedownOnly();
 
-    // 3. Compute Field Setup and Takedown duties
-    ss.toast("Calculating Setup & Takedown matches...", "AYSO 154 Sync", 5);
-    updateFieldSetupTakedownSheet();
+    // Form sync (gracefully skipped if FORM_ID is disabled/blank)
+    if (CONFIG.FORM_ID && !CONFIG.FORM_ID.includes("YOUR_") && CONFIG.FORM_ID !== "") {
+      syncFormDropdown();
+    }
 
-    // 4. Run referee check-in audit
-    ss.toast("Auditing referee coverage...", "AYSO 154 Sync", 5);
-    runRefereeAudit();
+    // Referee audit
+    menuAuditOnly();
 
-    ss.toast("All operations successfully synchronized!", "Complete", 7);
+    ss.toast("All operational sheets synchronized!", "Success", 5);
   } catch (err) {
     Logger.log("Error during full sync: " + err.toString());
     SpreadsheetApp.getUi().alert("Sync encountered an error: " + err.message);
   }
 }
 
-/**
- * Menu action: Ingest files only.
- */
-function menuIngestOnly() {
+function menuPopulateMasterHomeOnly() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ss.toast("Checking Gmail and Drive drop folder...", "Ingesting", 5);
-  runScheduleIngest();
-  ss.toast("Ingestion complete.", "Complete", 5);
+  const sourceSheet = ss.getSheetByName(CONFIG.SHEET_TABS.REF_DATA) || 
+                      ss.getSheetByName(CONFIG.SHEET_TABS.RAW);
+  if (!sourceSheet || sourceSheet.getLastRow() <= 1) return;
+
+  const rawRows = sourceSheet.getDataRange().getValues();
+  const games = transformRawSchedule(rawRows);
+  if (games.length === 0) return;
+
+  const targetSheet = ss.getSheetByName(CONFIG.SHEET_TABS.MASTER_HOME) || 
+                      ss.insertSheet(CONFIG.SHEET_TABS.MASTER_HOME);
+
+  const rows = games.map(g => [
+    g.gameId, g.dateStr, g.timeStr, g.division, g.cleanField, g.venue, g.matchup, g.homeCoach, g.awayCoach, g.dropdownLabel, g.circuit
+  ]);
+
+  const headers = ["Game #", "Date", "Time", "Division", "Field", "Venue", "Matchup", "Home Coach", "Away Coach", "Dropdown Label", "Circuit"];
+
+  targetSheet.clearContents();
+  targetSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  targetSheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+
+  targetSheet.getRange(1, 1, 1, headers.length)
+    .setFontWeight("bold")
+    .setBackground("#1b365d")
+    .setFontColor("#ffffff")
+    .setHorizontalAlignment("center");
+  targetSheet.setFrozenRows(1);
+  targetSheet.autoResizeColumns(1, headers.length);
 }
 
-/**
- * Menu action: Refresh Google Form dropdown only.
- */
-function menuSyncFormOnly() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ss.toast("Pushing upcoming matches to Google Form...", "Updating Form", 5);
-  syncFormDropdown();
-  ss.toast("Google Form dropdown updated.", "Complete", 5);
-}
-
-/**
- * Menu action: Recalculate Field Setup and Takedown only.
- */
 function menuSetupTakedownOnly() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ss.toast("Calculating morning and afternoon duties...", "Setup/Takedown", 5);
   updateFieldSetupTakedownSheet();
-  ss.toast("Setup/Takedown tab updated.", "Complete", 5);
 }
 
-/**
- * Menu action: Re-run referee audit only.
- */
 function menuAuditOnly() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ss.toast("Cross-referencing MatchTrak against Form submissions...", "Auditing", 5);
   runRefereeAudit();
-  ss.toast("Referee Audit tab updated.", "Complete", 5);
 }
