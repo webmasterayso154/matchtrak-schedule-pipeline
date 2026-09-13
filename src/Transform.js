@@ -24,16 +24,12 @@ function cleanFieldName(rawField) {
     .replace(/\s+Fal\s+20\d\d/gi, "")
     .replace(/Elementary School/gi, "ES")
     .replace(/ARTIFICIAL TURF/gi, "Turf")
-    .replace(/GRASS\s+/gi, "")         // Cleans "GRASS " while preserving "Field 10"
+    .replace(/GRASS\s+/gi, "")
     .replace(/U\d+\s+/gi, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-/**
- * Arnold ES (Field 10) is adjacent to Lexington JHS and shares logistics.
- * Park Lexington is handled as a separate venue.
- */
 function getOperationalVenue(cleanField) {
   const f = String(cleanField).toLowerCase();
   if (f.includes("park lexington")) {
@@ -78,6 +74,22 @@ function cleanTime(rawTime) {
   return str;
 }
 
+/**
+ * Converts 12-hour AM/PM time strings into absolute minutes from midnight
+ * to prevent alphabetical sort errors (e.g., 10:00 AM sorting before 8:00 AM).
+ */
+function parseTimeToMinutes(timeStr) {
+  if (!timeStr) return 0;
+  const match = String(timeStr).trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+  if (!match) return 0;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const meridiem = match[3] ? match[3].toUpperCase() : null;
+  if (meridiem === "PM" && hours < 12) hours += 12;
+  if (meridiem === "AM" && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+}
+
 function buildFormDropdownLabel(game) {
   return `${game.dateStr} ${game.timeStr} | ${game.division} | ${game.homeCoach} vs ${game.awayCoach} | ${game.cleanField} [#${game.gameId}]`;
 }
@@ -110,6 +122,7 @@ function transformRawSchedule(rawRows) {
       dateStr: dateStr,
       rawDate: rawDate,
       timeStr: timeStr,
+      minutes: parseTimeToMinutes(timeStr),
       division: division,
       cleanField: cleanField,
       venue: venue,
