@@ -1,0 +1,30 @@
+# Google clasp credentials and project configuration
+.clasp.json
+.clasprc.json
+clasp.json
+
+# Service accounts and credentials
+*.key
+*.pem
+credentials.json
+service-account*.json
+client_secret*.json
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Dependency directories
+node_modules/
+package-lock.json
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# OS metadata
+.DS_Store
+Thumbs.db
